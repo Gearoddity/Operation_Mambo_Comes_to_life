@@ -2,12 +2,42 @@ import os
 import queue
 import sys
 import json
+import threading
+import time
 import sounddevice as sd
 from vosk import Model, KaldiRecognizer
 
 # Thread-safe queue for audio chunks from the microphone
 q = queue.Queue()
 
+trigger_active = False
+timer_lock = threading.Lock()
+cancel_event = threading.Event()
+
+
+def activate_timer():
+    global trigger_active
+    with timer_lock:
+        if trigger_active:
+            return  # Already running
+        trigger_active = True
+        cancel_event.clear()  # Reset the cancel signal for this new session
+
+
+    # Wait for 30 seconds, but check every 0.1 seconds if we were told to cancel
+    for _ in range(300):  # 300 * 0.1 seconds = 30 seconds
+        if cancel_event.is_set():
+            break
+        time.sleep(0.1)
+
+    with timer_lock:
+        trigger_active = False
+
+
+
+def cancel_timer():
+    """Call this function anytime you want to force the timer to stop immediately."""
+    cancel_event.set()
 
 def callback(indata, frames, time, status):
     """Callback function for the sounddevice input stream."""
@@ -51,15 +81,23 @@ def main():
                         # Clear the partial line and print finalized text clearly
                         sys.stdout.write("\r\033[K")
                         print(f"[Transcribed]: {text}")
-                        if "one" in text.lower() or "pills" in text.lower():
+                        # --- ADD THIS CHECK ---
+                        if "mambo" in text.lower():
+                            threading.Thread(target=activate_timer, daemon=True).start()
+                        if ("one" in text.lower() or "pills" in text.lower()) and trigger_active:
+                            cancel_timer()
                             print("\n\n")
-                        elif "two" in text or "whether" in text.lower():
+                        elif ("two" in text or "whether" in text.lower()) and trigger_active:
+                            cancel_timer()
                             print("\n\n")
-                        elif "three" in text or "news" in text.lower():
+                        elif ("three" in text or "news" in text.lower()) and trigger_active:
+                            cancel_timer()
                             print("\n\n")
-                        elif "for" in text or "schedule" in text.lower():
+                        elif ("for" in text or "schedule" in text.lower()) and trigger_active:
+                            cancel_timer()
                             print("\n\n")
-                        elif "five" in text or "number five" in text.lower():
+                        elif ("five" in text or "number five" in text.lower()) and trigger_active:
+                            cancel_timer()
                             print("\n\n")
                 else:
                     # Live partial results as you speak
