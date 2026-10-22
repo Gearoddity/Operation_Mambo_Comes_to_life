@@ -1,116 +1,76 @@
-import os
-import queue
-import sys
-import json
 import threading
 import time
-import sounddevice as sd
-from vosk import Model, KaldiRecognizer
+import tkinter as tk
 
-# Thread-safe queue for audio chunks from the microphone
-q = queue.Queue()
+from voice_listener import VoiceListener
+from dashboard_ui import DashboardApp
 
+# --- STATE VARIABLES & TIMER LOGIC ---
 trigger_active = False
 timer_lock = threading.Lock()
 cancel_event = threading.Event()
+
+
+def get_trigger_status():
+    with timer_lock:
+        return trigger_active
 
 
 def activate_timer():
     global trigger_active
     with timer_lock:
         if trigger_active:
-            return  # Already running
+            return
         trigger_active = True
-        cancel_event.clear()  # Reset the cancel signal for this new session
+        cancel_event.clear()
 
+    print("\n[EVENT]: 'mambo' detected! Variable is TRUE for 30 seconds.")
 
-    # Wait for 30 seconds, but check every 0.1 seconds if we were told to cancel
-    for _ in range(300):  # 300 * 0.1 seconds = 30 seconds
+    for _ in range(300):
         if cancel_event.is_set():
             break
         time.sleep(0.1)
 
     with timer_lock:
         trigger_active = False
-
-
-
-def cancel_timer():
-    """Call this function anytime you want to force the timer to stop immediately."""
-    cancel_event.set()
-
-def callback(indata, frames, time, status):
-    """Callback function for the sounddevice input stream."""
-    if status:
-        print(status, file=sys.stderr)
-    q.put(bytes(indata))
+    print("\n[EVENT]: Timer ended. Variable is FALSE.")
 
 
 def main():
-    # Verify model directory exists
-    model_path = "model"
-    if not os.path.exists(model_path):
-        print(f"Error: Could not find the offline model folder ('{model_path}').")
-        print("Please download a model from https://alphacephei.com/vosk/models and place it here.")
-        sys.exit(1)
+    # Reference to GUI app (will be assigned once initialized)
+    app_ref = {"ui": None}
 
-    print("Loading offline Vosk model... Please wait.")
-    model = Model(model_path)
+    def handle_voice_command(text):
+        text_lower = text.lower()
 
-    # Vosk typically expects 16kHz mono audio
-    samplerate = 16000
+        if "mambo" in text_lower:
+            threading.Thread(target=activate_timer, daemon=True).start()
+        elif "news" in text_lower or "one" in text_lower:
+            if app_ref["ui"]: app_ref["ui"].switch_screen("news")
+        elif "pills" in text_lower or "two" in text_lower:
+            if app_ref["ui"]: app_ref["ui"].switch_screen("pills")
+        elif "schedule" in text_lower or "three" in text_lower:
+            if app_ref["ui"]: app_ref["ui"].switch_screen("schedule")
+        elif "weather" in text_lower or "four" in text_lower:
+            if app_ref["ui"]: app_ref["ui"].switch_screen("weather")
+        elif "number five" in text_lower or "five" in text_lower:
+            if app_ref["ui"]: app_ref["ui"].switch_screen("five")
+        elif "home" in text_lower or "main" in text_lower:
+            if app_ref["ui"]: app_ref["ui"].switch_screen("home")
 
-    print("\n==============================================")
-    print(" Microphone is LIVE. Start speaking!")
-    print(" Press Ctrl+C in the terminal to stop.")
-    print("==============================================\n")
+    # Initialize Voice Listener
+    listener = VoiceListener(on_command_callback=handle_voice_command)
 
-    try:
-        # Open microphone stream using sounddevice
-        with sd.RawInputStream(samplerate=samplerate, blocksize=8000, dtype='int16',
-                               channels=1, callback=callback):
-            rec = KaldiRecognizer(model, samplerate)
+    # Start listener in a background thread
+    listener_thread = threading.Thread(target=listener.start_listening, daemon=True)
+    listener_thread.start()
 
-            while True:
-                data = q.get()
-                if rec.AcceptWaveform(data):
-                    # Finalized sentence/phrase chunk
-                    result = json.loads(rec.Result())
-                    text = result.get("text", "").strip()
-                    if text:
-                        # Clear the partial line and print finalized text clearly
-                        sys.stdout.write("\r\033[K")
-                        print(f"[Transcribed]: {text}")
-                        # --- ADD THIS CHECK ---
-                        if "mambo" in text.lower():
-                            threading.Thread(target=activate_timer, daemon=True).start()
-                        if ("one" in text.lower() or "pills" in text.lower()) and trigger_active:
-                            cancel_timer()
-                            print("\n\n")
-                        elif ("two" in text or "whether" in text.lower()) and trigger_active:
-                            cancel_timer()
-                            print("\n\n")
-                        elif ("three" in text or "news" in text.lower()) and trigger_active:
-                            cancel_timer()
-                            print("\n\n")
-                        elif ("for" in text or "schedule" in text.lower()) and trigger_active:
-                            cancel_timer()
-                            print("\n\n")
-                        elif ("five" in text or "number five" in text.lower()) and trigger_active:
-                            cancel_timer()
-                            print("\n\n")
-                else:
-                    # Live partial results as you speak
-                    partial = json.loads(rec.PartialResult())
-                    partial_text = partial.get("partial", "").strip()
-                    if partial_text:
-                        sys.stdout.write(f"\r[Listening...]: {partial_text}")
-                        sys.stdout.flush()
+    # Start Tkinter GUI on the main thread
+    root = tk.Tk()
+    app = DashboardApp(root, get_trigger_status_func=get_trigger_status)
+    app_ref["ui"] = app
 
-    except KeyboardInterrupt:
-        print("\n\nStopping script. Goodbye!")
-    except Exception as e:
-        print(f"\nAn error occurred: {e}")
+    root.mainloop()
 
 
 if __name__ == "__main__":
