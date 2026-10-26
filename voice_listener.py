@@ -1,53 +1,62 @@
 import os
-import queue
-import sys
 import json
-import sounddevice as sd
+import pyaudio
 from vosk import Model, KaldiRecognizer
 
 
-class VoiceListener:
-    def __init__(self, on_command_callback):
-        self.q = queue.Queue()
-        self.on_command_callback = on_command_callback  # Function to call when text is recognized
+class SimpleListener:
+    def __init__(self, model_path="model", callback=None):
+        self.model_path = model_path
+        self.callback = callback
+        self.is_running = False
 
-    def _audio_callback(self, indata, frames, time_info, status):
-        if status:
-            print(status, file=sys.stderr)
-        self.q.put(bytes(indata))
+        if not os.path.exists(self.model_path):
+            raise FileNotFoundError(f"Error: '{self.model_path}' folder not found. Make sure your Vosk model is here.")
 
-    def start_listening(self):
-        model_path = "model"
-        if not os.path.exists(model_path):
-            print(f"Error: Could not find the offline model folder ('{model_path}').")
-            sys.exit(1)
+        print("Loading model...")
+        self.model = Model(self.model_path)
+        self.recognizer = KaldiRecognizer(self.model, 16000)
 
-        print("Loading offline Vosk model... Please wait.")
-        model = Model(model_path)
-        samplerate = 16000
+        self.p = pyaudio.PyAudio()
+        self.stream = None
 
-        print("\n==============================================")
-        print(" Microphone is LIVE. Speak your commands!")
-        print("==============================================\n")
+    def start(self):
+        """Starts the microphone stream and listening loop."""
+        self.stream = self.p.open(
+            format=pyaudio.paInt16,
+            channels=1,
+            rate=16000,
+            input=True,
+            frames_per_buffer=8000
+        )
+        self.stream.start_stream()
+        self.is_running = True
 
-        with sd.RawInputStream(samplerate=samplerate, blocksize=8000, dtype='int16',
-                               channels=1, callback=self._audio_callback):
-            rec = KaldiRecognizer(model, samplerate)
+        print("\n--- LISTENING --- (Speak into your mic, press Ctrl+C to exit)")
 
-            while True:
-                data = self.q.get()
-                if rec.AcceptWaveform(data):
-                    result = json.loads(rec.Result())
+        try:
+            while self.is_running:
+                data = self.stream.read(4000, exception_on_overflow=False)
+                if self.recognizer.AcceptWaveform(data):
+                    result = json.loads(self.recognizer.Result())
                     text = result.get("text", "").strip()
 
                     if text:
-                        sys.stdout.write("\r\033[K")
-                        print(f"[Transcribed]: {text}")
-                        # Send text to main handler
-                        self.on_command_callback(text)
-                else:
-                    partial = json.loads(rec.PartialResult())
-                    partial_text = partial.get("partial", "").strip()
-                    if partial_text:
-                        sys.stdout.write(f"\r[Listening...]: {partial_text}")
-                        sys.stdout.flush()
+                        # If a callback function was provided, pass the text to it!
+                        if self.callback:
+                            self.callback(text)
+                        else:
+                            print(f"Heard (no callback): {text}")
+
+        except Exception as e:
+            print(f"Error: {e}")
+        finally:
+            self.stop()
+
+    def stop(self):
+        self.is_running = False
+        if self.stream:
+            self.stream.stop_stream()
+            self.stream.close()
+        self.p.terminate()
+        print("Listener stopped.")

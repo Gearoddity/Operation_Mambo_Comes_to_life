@@ -1,76 +1,41 @@
-import threading
-import time
-import tkinter as tk
+from voice_listener import SimpleListener
+from Active_Variable import wake
 
-from voice_listener import VoiceListener
-from dashboard_ui import DashboardApp
-
-# --- STATE VARIABLES & TIMER LOGIC ---
-trigger_active = False
-timer_lock = threading.Lock()
-cancel_event = threading.Event()
+wake_word = wake()
 
 
-def get_trigger_status():
-    with timer_lock:
-        return trigger_active
 
 
-def activate_timer():
-    global trigger_active
-    with timer_lock:
-        if trigger_active:
-            return
-        trigger_active = True
-        cancel_event.clear()
 
-    print("\n[EVENT]: 'mambo' detected! Variable is TRUE for 30 seconds.")
+def handle_spoken_text(text):
+    print(f"[MAIN RECEIVED]: {text}")
 
-    for _ in range(300):
-        if cancel_event.is_set():
-            break
-        time.sleep(0.1)
-
-    with timer_lock:
-        trigger_active = False
-    print("\n[EVENT]: Timer ended. Variable is FALSE.")
-
+    if "main" in text.lower() or "mambo" in text.lower():
+        print("[MAIN RECEIVED]")
+        wake_word.active_timer()
+    elif "whether" in text.lower() and wake_word.check_active():
+        print("[WEATHER RECEIVED]")
+        wake_word.force_stop()
+    elif "hills" in text.lower() and wake_word.check_active():
+        print("[PILLS RECEIVED]")
+        wake_word.force_stop()
+    elif "news" in text.lower() and wake_word.check_active():
+        print("[NEWS RECEIVED]")
+        wake_word.force_stop()
+    elif "schedule" in text.lower() and wake_word.check_active():
+        print("[SCHEDULE RECEIVED]")
+        wake_word.force_stop()
+    elif "number five" in text.lower() and wake_word.check_active():
+        print("[NUMBER FIVE RECEIVED]")
+        wake_word.force_stop()
 
 def main():
-    # Reference to GUI app (will be assigned once initialized)
-    app_ref = {"ui": None}
+    listener = SimpleListener(model_path="model", callback=handle_spoken_text)
 
-    def handle_voice_command(text):
-        text_lower = text.lower()
-
-        if "mambo" in text_lower:
-            threading.Thread(target=activate_timer, daemon=True).start()
-        elif "news" in text_lower or "one" in text_lower:
-            if app_ref["ui"]: app_ref["ui"].switch_screen("news")
-        elif "pills" in text_lower or "two" in text_lower:
-            if app_ref["ui"]: app_ref["ui"].switch_screen("pills")
-        elif "schedule" in text_lower or "three" in text_lower:
-            if app_ref["ui"]: app_ref["ui"].switch_screen("schedule")
-        elif "weather" in text_lower or "four" in text_lower:
-            if app_ref["ui"]: app_ref["ui"].switch_screen("weather")
-        elif "number five" in text_lower or "five" in text_lower:
-            if app_ref["ui"]: app_ref["ui"].switch_screen("five")
-        elif "home" in text_lower or "main" in text_lower:
-            if app_ref["ui"]: app_ref["ui"].switch_screen("home")
-
-    # Initialize Voice Listener
-    listener = VoiceListener(on_command_callback=handle_voice_command)
-
-    # Start listener in a background thread
-    listener_thread = threading.Thread(target=listener.start_listening, daemon=True)
-    listener_thread.start()
-
-    # Start Tkinter GUI on the main thread
-    root = tk.Tk()
-    app = DashboardApp(root, get_trigger_status_func=get_trigger_status)
-    app_ref["ui"] = app
-
-    root.mainloop()
+    try:
+        listener.start()
+    except KeyboardInterrupt:
+        listener.stop()
 
 
 if __name__ == "__main__":
