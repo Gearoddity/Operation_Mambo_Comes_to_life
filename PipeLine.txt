@@ -1,0 +1,3 @@
+Steps to completion:
+1. Live feed of speech to text (STT)
+2. STT feeds into looped if statement, triggering each part of the if when needed
