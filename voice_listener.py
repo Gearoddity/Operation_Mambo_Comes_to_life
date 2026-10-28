@@ -1,6 +1,6 @@
 import os
 import json
-import pyaudio
+import sounddevice as sd
 from vosk import Model, KaldiRecognizer
 
 
@@ -17,46 +17,48 @@ class SimpleListener:
         self.model = Model(self.model_path)
         self.recognizer = KaldiRecognizer(self.model, 16000)
 
-        self.p = pyaudio.PyAudio()
         self.stream = None
 
     def start(self):
-        """Starts the microphone stream and listening loop."""
-        self.stream = self.p.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=16000,
-            input=True,
-            frames_per_buffer=8000
-        )
-        self.stream.start_stream()
+        """Starts the microphone stream and listening loop using sounddevice."""
         self.is_running = True
-
         print("\n--- LISTENING --- (Speak into your mic, press Ctrl+C to exit)")
 
         try:
-            while self.is_running:
-                data = self.stream.read(4000, exception_on_overflow=False)
-                if self.recognizer.AcceptWaveform(data):
-                    result = json.loads(self.recognizer.Result())
-                    text = result.get("text", "").strip()
+            # sounddevice uses a generator/callback or a block-reading input stream context manager.
+            # sd.RawInputStream acts as a direct drop-in replacement for PyAudio's stream reading.
+            with sd.RawInputStream(samplerate=16000, blocksize=8000, dtype='int16',
+                                   channels=1) as self.stream:
+                while self.is_running:
+                    # stream.read returns (data_bytes, overflow_flag)
+                    data, overflow = self.stream.read(4000)
 
-                    if text:
-                        # If a callback function was provided, pass the text to it!
-                        if self.callback:
-                            self.callback(text)
-                        else:
-                            print(f"Heard (no callback): {text}")
+                    if self.recognizer.AcceptWaveform(data):
+                        result = json.loads(self.recognizer.Result())
+                        text = result.get("text", "").strip()
+
+                        if text:
+                            if self.callback:
+                                self.callback(text)
+                            else:
+                                print(f"Heard (no callback): {text}")
 
         except Exception as e:
-            print(f"Error: {e}")
+            if self.is_running:  # Only print if it wasn't an intentional shutdown
+                print(f"Error: {e}")
         finally:
             self.stop()
 
     def stop(self):
         self.is_running = False
         if self.stream:
-            self.stream.stop_stream()
-            self.stream.close()
-        self.p.terminate()
+            try:
+                self.stream.abort()
+                self.stream.close()
+            except Exception:
+                pass
+            self.stream = None
         print("Listener stopped.")
+
+
+# --- Your main function remains 100% untouched ---
